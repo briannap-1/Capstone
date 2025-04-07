@@ -17,19 +17,19 @@ library(corrplot)
 library(extrafont)
 library(huxtable)
 library(ivreg)
+library(sf)
+library(patchwork)
 ```
-
-```{r, echo = FALSE}
 
 ## Data structuring 
 
-
+```{r, echo = FALSE}
 # Aid data setup
 
 aid_data <- read.csv("/Users/briannapenkala/Downloads/Capstone/Aid CSV.csv")
 
 # Fixing things
-aid_data <- aid_data[,c(3,4,5,7,10,13, 20)]
+aid_data <- aid_data[,c(3,4,5,7,10,13,20,50)]
 aid_data$tot_activity_value_constant_currency <- gsub(",", "", aid_data$tot_activity_value_constant_currency) #euros
 aid_data <- aid_data %>%
   mutate(tot_activity_value_constant_currency = as.numeric(tot_activity_value_constant_currency)) %>%
@@ -42,7 +42,8 @@ aid_data <- aid_data %>%
 
 # Military aid only, adding month row for testing
 aid_data <- aid_data %>%
-  filter(aid_type_general == "Military") %>%
+  filter(aid_type_general == "Military", 
+         short_term == 1) %>%
   mutate(month = format(date, "%Y-%m"))
 
 # # Patriot missile defense system dataset
@@ -92,7 +93,6 @@ weekly_aid_sum$twoweek_lag_percent_aid <- ifelse(is.na(weekly_aid_sum$twoweek_la
 weekly_aid_sum <- weekly_aid_sum[5:145,]
 ```
 
-
 ```{r, echo = FALSE}
 # Events data setup
 
@@ -135,6 +135,11 @@ weekly_event_sum <- weekly_event_sum %>%
   w2w_change_ru = russian_instigated_events - lag(russian_instigated_events),  #this lag is only to calculate the percent change
   percent_change_russia = (w2w_change_ru / lag(russian_instigated_events)) * 100)
 
+#weekly_events_nodrones <- week
+
+missile_events <- events_data %>%
+  filter(russian_missiles == 1)
+
 monthly_event_sum <- events_data %>%
   filter(!is.na(date)) %>%
   mutate(month = floor_date(date, "month")) %>%
@@ -170,7 +175,9 @@ byweek_data <- byweek_data %>%
     absaidpercentchange = abs(percent_change_aid)) %>%
   mutate(aidgiven_week_lag = lag(aidgiven)) %>%
   mutate(aidgiven_twoweek_lag = lag(aidgiven, 2))
-``` 
+```
+
+## Top/bottom analysis
 
 ```{r, echo = FALSE}
 top25_aid <- byweek_data %>%
@@ -234,7 +241,6 @@ both25 <- both25[,-c(4, 5)]
 
 Top/bottom 25 aid and events percent changes (only rows with data in both columns)
 
-
 ```{r, echo = FALSE, warning = FALSE}
 ggplot(aes(percent_change_ukraine, percent_change_aid/200), data = both25) +
   geom_point(aes(color = aidukraine_classification), alpha = 0.6) +
@@ -250,7 +256,6 @@ ggplot(aes(percent_change_ukraine, percent_change_aid/200), data = both25) +
     axis.text = element_text(family = "Times New Roman"),
     plot.title = element_text(family = "Times New Roman"))
 ```
-
 
 ```{r, echo = FALSE}
 # Line of best fit example
@@ -269,15 +274,9 @@ ggplot(aes(abs_ukraine, abs_ukraine/100), data = both25) +
     plot.title = element_text(family = "Times New Roman"))
 ```
 
-
-
-
+## Summary stats
 
 ```{r, results = 'asis', echo = FALSE}
-
-## Summary statistics 
-
-
 labeled_data <- byweek_data[,c("week", "weekly_aid_total", "percent_change_aid", "weekly_event_total", "ukrainian_instigated_events", "russian_instigated_events", "percent_change_total", "percent_change_ukraine", "percent_change_russia", "search_score")]
 
 # labeled_data <- labeled_data %>%
@@ -291,12 +290,9 @@ names(labeled_data) <- c("Week","Weekly aid total (euro)", "Change in aid (%)", 
 summ_stats <- stargazer(labeled_data, type = "text", summary = TRUE, iqr = TRUE, font.size = "scriptsize")
 ```
 
-
-```{r, echo = FALSE}
-
 ## Correlation matrix
 
-
+```{r, echo = FALSE}
 # Creating correlation matrix (extra parameter to deal with NAs)
 corr_matrix <- cor(labeled_data[,c(2, 7, 8, 9)], use = "complete.obs")
 
@@ -306,8 +302,9 @@ corrplot <- corrplot(corr_matrix, type = "upper", method = "color", order = "hcl
 # (type is layout, hclust is heirarchical ordering)
 ```
 
+## Visualizations
 
-```{r, echo = FALSE, include = FALSE}
+```{r, echo = FALSE}
 
 ## Data visualization
 
@@ -484,8 +481,30 @@ ukr_rus_events <- ggplot(byweek_data) +
 ukr_rus_events
 ```
 
+```{r}
+# Map of missile attacks
 
-# T-tests
+ukraine <- st_read("/Users/briannapenkala/Downloads/Capstone/gadm41_UKR_shp")
+missiles_sf <- st_as_sf(missile_events, coords = c("longitude", "latitude"), crs = 4326)
+
+missile_before1 <- missiles_sf %>% filter(date < as.Date("2022-12-21"))
+missile_after1 <- missiles_sf %>% filter(date >= as.Date("2022-12-21") & date < as.Date("2023-06-01"))
+
+missile_map_before1 <- ggplot() + 
+  geom_sf(data = ukraine, fill = "white", color = "black") + 
+  geom_sf(data = missile_before1 , color = "red", alpha = 0.2) +
+  ggtitle("Before Patriot Deployment")
+
+missile_map_after1 <- ggplot() + 
+  geom_sf(data = ukraine, fill = "white", color = "black") + 
+  geom_sf(data = missile_after1 , color = "blue", alpha = 0.2) +
+  ggtitle("After Patriot Deployment")
+(missile_map_before1 + missile_map_after1) +
+   plot_annotation(
+    title = "Missile Attacks in Ukraine Before and After Patriot Deployment")
+```
+
+## T-tests
 
 ```{r, echo = FALSE}
 ## T-tests
@@ -529,7 +548,6 @@ bottom_border(low_high_ttest)[0:1,] <- .4
 align(low_high_ttest) <- "center"
 stripe_rows(low_high_ttest, stripe1 = "white", stripe2 = "grey90")
 ```
-
 
 # Regressions on Ukraine
 
@@ -594,7 +612,6 @@ output_dummy <- huxreg(basic_dummy,
 output_dummy
 ```
 
-
 # Regressions on Russia
 
 ```{r}
@@ -657,8 +674,7 @@ output_dummy_russia <- huxreg(basic_dummy_russia,
 output_dummy_russia
 ```
 
-
-# Missile regressions 
+# Regressions on missiles
 
 ```{r}
 # Missiles regressions
@@ -671,10 +687,9 @@ summary(missile_reg)
 missile_reg_drone <- lm(russian_drones ~ patriot_aid, data = byweek_data)
 summary(missile_reg_drone)
 
-# ex <- lm(russian_missiles ~ russian_drones, data = byweek_data)
-# summary(ex)
+ex <- lm(russian_missiles ~ russian_drones, data = byweek_data)
+summary(ex)
 ```
-
 
 ```{r, echo = FALSE}
 # Graph comparing the amount of aid and events percentage ranges 
@@ -701,4 +716,3 @@ ggplot(aes(x = week), data = byweek_data) +
     plot.title = element_text(family = "Times New Roman"))
   
 ```
-
