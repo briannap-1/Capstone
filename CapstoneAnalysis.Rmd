@@ -1,0 +1,704 @@
+---
+title: "Analysis"
+author: "Brianna Penkala, Kai Hoeger"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE, echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(stargazer)
+library(scales)
+library(corrplot)
+library(extrafont)
+library(huxtable)
+library(ivreg)
+```
+
+```{r, echo = FALSE}
+
+## Data structuring 
+
+
+# Aid data setup
+
+aid_data <- read.csv("/Users/briannapenkala/Downloads/Capstone/Aid CSV.csv")
+
+# Fixing things
+aid_data <- aid_data[,c(3,4,5,7,10,13, 20)]
+aid_data$tot_activity_value_constant_currency <- gsub(",", "", aid_data$tot_activity_value_constant_currency) #euros
+aid_data <- aid_data %>%
+  mutate(tot_activity_value_constant_currency = as.numeric(tot_activity_value_constant_currency)) %>%
+  mutate(announcement_date = as.Date(announcement_date, format = "%m/%d/%y")) %>%
+  rename(date = announcement_date)
+
+# Fixing Finland typo ****************** (check for consistency in case rows change)
+aid_data <- aid_data %>%
+  mutate(donor = ifelse(donor == "FInland", "Finland", donor))
+
+# Military aid only, adding month row for testing
+aid_data <- aid_data %>%
+  filter(aid_type_general == "Military") %>%
+  mutate(month = format(date, "%Y-%m"))
+
+# # Patriot missile defense system dataset
+# missile_aid_df <- aid_data %>%
+#   filter(Patriot.aid == TRUE) 
+# missile_aid_df <- missile_aid_df[,c(2,7)]
+
+# # Summarizing by day, note there is no lag
+# daily_aid_df <- aid_data %>%
+#   filter(!is.na(date), !is.na(tot_activity_value_constant_currency)) %>%
+#   mutate(day = floor_date(date, "day")) %>%
+#   group_by(day) %>%
+#   summarize(aid_daily_total = sum(tot_activity_value_constant_currency))
+
+# Monthly aid sum 
+monthly_aid_sum <- aid_data %>%
+  filter(!is.na(date), !is.na(tot_activity_value_constant_currency)) %>%
+  mutate(month = floor_date(date, "month")) %>%
+  group_by(month) %>%
+  summarize(monthly_total_aid = sum(tot_activity_value_constant_currency)) %>%
+  mutate(
+    aid_m2m_change = monthly_total_aid - lag(monthly_total_aid),  #this lag is only to calculate the percent change
+    percent_change_aid = (aid_m2m_change / lag(monthly_total_aid)) * 100)
+monthly_aid_sum <- monthly_aid_sum[2:34,]
+
+# Weekly aid sum 
+weekly_aid_sum <- aid_data %>%
+  filter(!is.na(date)) %>%
+  mutate(tot_activity_value_constant_currency = replace_na(tot_activity_value_constant_currency, 0), 
+         week = floor_date(date, "week")) %>%
+  group_by(week) %>%
+  summarize(weekly_aid_total = sum(tot_activity_value_constant_currency),
+            patriot_aid = sum(Patriot.aid, na.rm = TRUE)) %>%
+  mutate(
+    aid_w2w_change = weekly_aid_total - lag(weekly_aid_total),  #this lag is only to calculate the percent change
+    percent_change_aid = (aid_w2w_change / lag(weekly_aid_total)) * 100) %>%
+  mutate(
+    week_lag_percent_aid = lag(percent_change_aid),
+    twoweek_lag_percent_aid = lag(percent_change_aid, 2)
+  ) %>%
+  complete(week = seq(min(week), max(week), by = "week"), fill = list(weekly_aid_total = 0))
+
+weekly_aid_sum$percent_change_aid <- ifelse(is.na(weekly_aid_sum$percent_change_aid) | is.infinite(weekly_aid_sum$percent_change_aid), 0, weekly_aid_sum$percent_change_aid)
+weekly_aid_sum$week_lag_percent_aid <- ifelse(is.na(weekly_aid_sum$week_lag_percent_aid) | is.infinite(weekly_aid_sum$week_lag_percent_aid), 0, weekly_aid_sum$week_lag_percent_aid)
+weekly_aid_sum$twoweek_lag_percent_aid <- ifelse(is.na(weekly_aid_sum$twoweek_lag_percent_aid) | is.infinite(weekly_aid_sum$twoweek_lag_percent_aid), 0, weekly_aid_sum$twoweek_lag_percent_aid)
+
+weekly_aid_sum <- weekly_aid_sum[5:145,]
+```
+
+
+```{r, echo = FALSE}
+# Events data setup
+
+events_data <- read.csv("/Users/briannapenkala/Downloads/Capstone/Working Events Data 4_6.csv")
+
+events_data <- events_data %>%
+  mutate(event_date = as.Date(event_date, format = "%m/%d/%y")) %>%
+  rename(date = event_date) %>%
+  mutate(russian_missiles = as.numeric(russian_missiles),
+         russian_drones = as.numeric(russian_drones))
+
+# # Summarizing by day
+# daily_event_df <- events_data %>%
+#   filter(!is.na(date)) %>%
+#   mutate(day = floor_date(date, "day")) %>%
+#   group_by(day) %>%
+#   summarize(event_daily_total = n())
+
+# Weekly event sum
+weekly_event_sum <- events_data %>%
+  filter(!is.na(date)) %>%
+  mutate(week = floor_date(date, "week")) %>%
+  group_by(week) %>%
+  summarize(weekly_event_total = n(), 
+            ukrainian_instigated_events = sum(AggressorCoded), 
+            russian_missiles = sum(russian_missiles), 
+            russian_drones = sum(russian_drones))
+
+weekly_event_sum$russian_instigated_events <- weekly_event_sum$weekly_event_total - weekly_event_sum$ukrainian_instigated_events
+
+weekly_event_sum <- weekly_event_sum[4:nrow(weekly_event_sum),]
+weekly_event_sum <- weekly_event_sum %>% 
+  mutate(
+  w2w_change_total = weekly_event_total - lag(weekly_event_total),  #this lag is only to calculate the percent change
+  percent_change_total = (w2w_change_total / lag(weekly_event_total)) * 100) %>%
+  mutate(
+  w2w_change_uk = ukrainian_instigated_events - lag(ukrainian_instigated_events),  #this lag is only to calculate the percent change
+  percent_change_ukraine = (w2w_change_uk / lag(ukrainian_instigated_events)) * 100) %>%
+  mutate(
+  w2w_change_ru = russian_instigated_events - lag(russian_instigated_events),  #this lag is only to calculate the percent change
+  percent_change_russia = (w2w_change_ru / lag(russian_instigated_events)) * 100)
+
+monthly_event_sum <- events_data %>%
+  filter(!is.na(date)) %>%
+  mutate(month = floor_date(date, "month")) %>%
+  group_by(month) %>%
+  summarize(monthly_total_events = n()) %>%
+  mutate(
+    events_m2m_change = monthly_total_events - lag(monthly_total_events),  #this lag is only to calculate the percent change
+    events_percent_change = (events_m2m_change / lag(monthly_total_events)) * 100)
+```
+
+```{r, echo = FALSE, message = FALSE}
+# Merging data by given dates, no lag, no percent change (FOR STAGE 2)
+# byday_data <- full_join(daily_aid_df, daily_event_df, by = "day")
+# byday_data
+# byday_data$aid_daily_total <- ifelse(is.na(byday_data$aid_daily_total), 0, byday_data$aid_daily_total)
+
+# By week data
+byweek_data <- full_join(weekly_aid_sum, weekly_event_sum, by = "week")
+# Adding search data to week data
+search_data <- read_csv("/Users/briannapenkala/Downloads/Capstone/SearchData.csv")
+search_data$Week <- as.Date(search_data$Week, format = "%m/%d/%y")
+search_data <- search_data[,c(1,9)] # for the sake of matching aid data
+search_data <- search_data[6:146,]
+search_data <- search_data %>%
+  rename(week = Week)
+byweek_data <- full_join(byweek_data, search_data, by = "week")
+byweek_data <- as.data.frame(byweek_data) %>%
+  mutate(across(everything(), ~replace_na(., 0)))
+
+byweek_data <- byweek_data %>%
+  mutate(aidgiven = if_else(weekly_aid_total == 0, 0, 1),
+    abspercentukraine = abs(percent_change_ukraine), 
+    absaidpercentchange = abs(percent_change_aid)) %>%
+  mutate(aidgiven_week_lag = lag(aidgiven)) %>%
+  mutate(aidgiven_twoweek_lag = lag(aidgiven, 2))
+``` 
+
+```{r, echo = FALSE}
+top25_aid <- byweek_data %>%
+  arrange(desc(percent_change_aid)) %>%
+  slice_head(n = 25) %>%
+  dplyr::select(week, percent_change_aid)
+
+bottom25_aid <- byweek_data %>%
+  arrange(percent_change_aid) %>%
+  slice_head(n = 25) %>%
+  dplyr::select(week, percent_change_aid)
+
+top25_ukevents <- byweek_data %>%
+  arrange(desc(percent_change_ukraine)) %>%
+  slice_head(n = 25) %>%
+  dplyr::select(week, percent_change_ukraine)
+
+bottom25_ukevents <- byweek_data %>%
+  arrange(percent_change_ukraine) %>%
+  slice_head(n = 25) %>%
+  dplyr::select(week, percent_change_ukraine)
+
+top25 <- full_join(top25_aid, top25_ukevents, by = "week") %>%
+  mutate(classification = "top")
+bottom25 <- full_join(bottom25_aid, bottom25_ukevents, by = "week") %>%
+  mutate(classification = "bottom")
+all25 <- full_join(top25, bottom25, by = "week") %>%
+  mutate(percent_change_aid = coalesce(percent_change_aid.x, percent_change_aid.y)) %>%
+  mutate(percent_change_ukraine = coalesce(percent_change_ukraine.x, percent_change_ukraine.y))
+all25 <- all25[,c(1, 8, 9)] 
+all25 <- all25 %>%
+    mutate(classification_ukraine = case_when(
+    percent_change_ukraine <= -18.96552 ~ "low", 
+    percent_change_ukraine >= 23.18841 ~ "high")) %>%
+    mutate(classification_aid = case_when(
+      percent_change_aid <= -90.58176 ~ "low",
+      percent_change_aid >= 810 ~ "high")) %>%
+    mutate(aidukraine_classification = paste(classification_aid,classification_ukraine)) %>%
+  mutate(abs_aid = abs(percent_change_aid)) %>%
+  mutate(abs_ukraine = abs(percent_change_ukraine)) 
+
+both25 <- all25 %>%
+  drop_na(percent_change_aid, percent_change_ukraine) %>%
+  mutate(abs_aid = abs(percent_change_aid)) %>%
+  mutate(abs_ukraine = abs(percent_change_ukraine)) %>%
+  mutate(aidukraine_classification = paste(classification_aid,classification_ukraine))
+both25 <- both25[,-c(4, 5)]
+
+
+# aid_uk_all25 <- ggplot(data = all25, aes(x = week)) +
+#   geom_point(aes(y = percent_change_aid, color = "Scaled Percent Change Aid")) + 
+#   scale_color_manual(values = c("Scaled Percent Change Aid" = "blue",
+#                                "Percent Change Ukraine" = "green")) +  
+#   labs(title = "Aid Percent Change vs. Ukraine Percent Change (Top/bottom 25 with data for both)",
+#        x = "Week", y = "Percent Change") +
+#   theme_minimal() +
+#   theme(legend.title = element_blank())
+# aid_uk_all25
+
+```
+
+Top/bottom 25 aid and events percent changes (only rows with data in both columns)
+
+
+```{r, echo = FALSE, warning = FALSE}
+ggplot(aes(percent_change_ukraine, percent_change_aid/200), data = both25) +
+  geom_point(aes(color = aidukraine_classification), alpha = 0.6) +
+  ylim(-3, 20) +
+  labs(title = "Relationship Between Aid and Events",
+       x = "Percent Change in Ukraine Events",
+       y = "Percent Change in Aid", 
+       color = "Classification (aid first)") +
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"), 
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"))
+```
+
+
+```{r, echo = FALSE}
+# Line of best fit example
+ggplot(aes(abs_ukraine, abs_ukraine/100), data = both25) +
+  geom_point(aes(color = aidukraine_classification), alpha = 0.6) +
+  ylim(-3, 5) +
+  labs(title = "Relationship Between Aid and Events",
+       x = " Absolute Value of Percent Change in Ukraine Events",
+       y = " Absolute Value of Percent Change in Aid", 
+       color = "Classification (aid first)") +
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"), 
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"))
+```
+
+
+
+
+
+```{r, results = 'asis', echo = FALSE}
+
+## Summary statistics 
+
+
+labeled_data <- byweek_data[,c("week", "weekly_aid_total", "percent_change_aid", "weekly_event_total", "ukrainian_instigated_events", "russian_instigated_events", "percent_change_total", "percent_change_ukraine", "percent_change_russia", "search_score")]
+
+# labeled_data <- labeled_data %>%
+#   mutate(
+#     percent_change_total = percent(round(percent_change_total, 3)),
+#     percent_change_ukraine = percent(round(percent_change_ukraine, 3)),
+#     percent_change_russia = percent(round(percent_change_russia, 3)),
+#   )
+
+names(labeled_data) <- c("Week","Weekly aid total (euro)", "Change in aid (%)", "Weekly event total", "Ukrainian instigated events", "Russian instigated events", "Change in total events (%)", "Change in Ukrainian events (%)", "Change in Russian events (%)", "Search score")
+summ_stats <- stargazer(labeled_data, type = "text", summary = TRUE, iqr = TRUE, font.size = "scriptsize")
+```
+
+
+```{r, echo = FALSE}
+
+## Correlation matrix
+
+
+# Creating correlation matrix (extra parameter to deal with NAs)
+corr_matrix <- cor(labeled_data[,c(2, 7, 8, 9)], use = "complete.obs")
+
+par(family = "Times New Roman")
+# Correlation plot (https://www.sthda.com/english/wiki/visualize-correlation-matrix-using-correlogram)
+corrplot <- corrplot(corr_matrix, type = "upper", method = "color", order = "hclust", tl.col = "black", tl.srt = 45, tl.cex = .9, addCoef.col = "darkgrey", outline = TRUE)
+# (type is layout, hclust is heirarchical ordering)
+```
+
+
+```{r, echo = FALSE, include = FALSE}
+
+## Data visualization
+
+interest_aid_viz <- ggplot(aes(x = week), data = byweek_data) + 
+  geom_line(aes(y = rescale(weekly_aid_total), color = "Aid"), linewidth = 1) + 
+  geom_line(aes(y = rescale(search_score), color = "Search score"), linewidth = 1) +
+  scale_color_manual(values = c("Search score" = "cadetblue4", "Aid" = "lightsalmon2")) +
+  scale_y_continuous(
+    name = "Standardized Value",
+    sec.axis = sec_axis(~ . , name = "Standardized Value") 
+  ) +
+  labs(title = "Search Score and Aid by Week", 
+       color = "Legend", 
+       x = "Week") + 
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"), 
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"))
+interest_aid_viz
+```
+
+```{r, echo = FALSE}
+# events_aid_viz <- ggplot(aes(x = week), data = byweek_data) + 
+#   geom_line(aes(y = percent_change_aid, color = "Aid"), linewidth = 1) + 
+#   #geom_line(aes(y = rescale(percent_change_ukraine), color = "Ukraine"), linewidth = 1) +
+#   scale_color_manual(values = c("Ukraine" = "cadetblue4", "Aid" = "lightsalmon2")) +
+# 
+#   labs(title = "Ukraine by Week", 
+#        color = "Legend", 
+#        x = "Week") + 
+#   theme_minimal(base_family = "Times New Roman") +
+#   theme(
+#     text = element_text(family = "Times New Roman"),
+#     axis.title = element_text(family = "Times New Roman"), 
+#     axis.text = element_text(family = "Times New Roman"),
+#     plot.title = element_text(family = "Times New Roman"))
+# events_aid_viz
+```
+
+```{r, echo = FALSE}
+# monthly_combined <- monthly_aid_sum %>%
+#   rename(Aid = percent_change_aid) %>%
+#   full_join(monthly_event_sum %>% rename(Event = events_percent_change), by = "month") %>%
+#   pivot_longer(cols = c(Aid, Event), names_to = "Type", values_to = "Percent_Change") 
+# 
+# # Create the bar plot with side-by-side bars
+# events_aid_viz <- ggplot(monthly_combined, aes(y = (Percent_Change), fill = Type)) +
+#   geom_histogram(position = "dodge") +
+#   scale_fill_manual(values = c("Aid" = "cadetblue4", "Event" = "lightsalmon2")) +
+#   scale_y_continuous(
+#     name = "Percent Change (%)"
+#   ) +
+#   labs(title = "Events and Aid Percent Change by Month",
+#        fill = "Legend",
+#        x = "Month") +
+#   theme_minimal() +
+#   theme_minimal(base_family = "Times New Roman") +
+#   theme(
+#     text = element_text(family = "Times New Roman"),
+#     axis.title = element_text(family = "Times New Roman"), 
+#     axis.text = element_text(family = "Times New Roman"),
+#     plot.title = element_text(family = "Times New Roman"))
+# 
+# 
+# events_aid_viz
+```
+
+```{r, echo = FALSE}
+# interest_events_viz <- ggplot(aes(x = week), data = byweek_data) + 
+#   geom_line(aes(y = rescale(search_score), color = "Search score")) +
+#   geom_line(aes(y = rescale(weekly_event_total), color = "Event")) + 
+#   scale_color_manual(values = c("Search score" = "cadetblue4", "Event" = "lightsalmon2")) +
+#   scale_y_continuous(
+#     name = "Standardized Value",
+#     sec.axis = sec_axis(~ . , name = "Standardized Value") 
+#   ) +
+#   labs(title = "Search Score and Events by Week", 
+#        color = "Legend", 
+#        x = "Week")
+# interest_events_viz
+```
+
+```{r, echo = FALSE}
+# Aid and Ukrainian instigated
+
+monthly_combined <- left_join(monthly_aid_sum, monthly_event_sum, by = "month")
+monthly_combined <- monthly_combined %>%
+  mutate(
+    aid_percent_scaled = (percent_change_aid - min(percent_change_aid, na.rm = TRUE)) / 
+                         (max(percent_change_aid, na.rm = TRUE) - min(percent_change_aid, na.rm = TRUE)),
+    events_percent_scaled = (events_percent_change - min(events_percent_change, na.rm = TRUE)) / 
+                            (max(events_percent_change, na.rm = TRUE) - min(events_percent_change, na.rm = TRUE))
+  )
+
+monthly_long_scaled <- monthly_combined %>%
+  select(month, aid_percent_scaled, events_percent_scaled) %>%
+  pivot_longer(cols = c(aid_percent_scaled, events_percent_scaled),
+               names_to = "Type", 
+               values_to = "Scaled_Change")
+
+# ---- Plot the Normalized Side-by-Side Bar Chart ----
+aid_ukinst <- ggplot(monthly_long_scaled, aes(x = month, y = Scaled_Change, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Normalized Percent Change: Aid vs Events",
+       x = "Month",
+       y = "Scaled Change (0-1)",
+       fill = "Category") +
+  scale_fill_manual(values = c("aid_percent_scaled" = "cadetblue4", "events_percent_scaled" = "lightsalmon2"), labels = c("aid_percent_scaled" = "Change in aid (%)", 
+               "events_percent_scaled" = "Change in events (%)")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"), 
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"))
+
+aid_ukinst
+```
+
+```{r, echo = FALSE, include = FALSE}
+# Aid by country 
+
+start_date <- as.Date("2022-02-20")
+end_date <- as.Date("2024-10-31")
+
+aid_data_graph <- aid_data %>%
+  filter(date >= start_date & date <= end_date) %>%
+  group_by(donor) %>%
+  summarize(total_aid = sum(tot_activity_value_constant_currency, na.rm = TRUE)) %>%
+  arrange(desc(total_aid))
+aid_data_graph <- aid_data_graph[1:10,]
+  
+aid_country <- ggplot(aes(x = reorder(donor, -total_aid), y = total_aid), data = aid_data_graph) +
+  geom_bar(stat = "identity", fill = "cadetblue4") +
+  theme_minimal() +
+  labs(title = "Top Ten Aid Providers (02/20/2022- 10/31/2024)",
+       x = "Donor",
+       y = "Total Aid Provided (in 2021 euros)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x-axis labels for readability
+  scale_fill_viridis_d() + 
+  scale_y_continuous(labels = comma) + 
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"), 
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"), 
+    axis.text.x = element_text(angle = 45, hjust = 1))
+  
+aid_country
+```
+
+```{r, echo = FALSE, message = FALSE}
+# Ukrainian events on Russian events
+ukr_rus_events <- ggplot(byweek_data) + 
+  geom_smooth(aes(x = week, y = percent_change_ukraine, color = "Change in Ukrainian events"), method = "loess", span = .09, se = FALSE) + 
+  geom_smooth(aes(x = week, y = percent_change_russia, color = "Change in Russian events"), method = "loess", span = .09, se = FALSE) + 
+  scale_color_manual(values = c("Change in Ukrainian events" = "cadetblue4", "Change in Russian events" = "lightsalmon2")) +
+  labs(title = "Russian and Ukrainian Instigated Events Over Time", 
+       x = "Week", 
+       y = "Percent Change in Events", 
+       color = "Legend") + 
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"), 
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"))
+
+ukr_rus_events
+```
+
+
+# T-tests
+
+```{r, echo = FALSE}
+## T-tests
+ru_uk_ttest <- t.test(byweek_data$ukrainian_instigated_events, byweek_data$russian_instigated_events)
+
+# First t-test
+ru_uk_table <- hux(
+  "T-statistic" = -28.345,
+  "Degrees of Freedom" = 218.26, 
+  "P-value" = "< 2.2e-16", 
+  "95% Confidence Interval" = "-294.746 - (-221.623)"
+)
+
+
+# Table details
+bold(ru_uk_table)[1,] <- TRUE
+bottom_border(ru_uk_table)[0:1,] <- .4
+align(ru_uk_table) <- "center"
+stripe_rows(ru_uk_table, stripe1 = "white", stripe2 = "grey90")
+```
+
+```{r, echo = FALSE}
+# Ukraine events high aid low aid
+
+high_aid <- byweek_data[111:115,]
+low_aid <- byweek_data[128:132,]
+
+low_high_ttest <- t.test(high_aid$percent_change_ukraine, low_aid$percent_change_ukraine, paired = TRUE)
+
+low_high_ttest <- hux(
+  "T-statistic" = -0.351,
+  "Degrees of Freedom" = 4, 
+  "P-value" = .7433, 
+  "95% Confidence Interval" = "-45.597 - 35.363"
+)
+
+
+# Table details
+bold(low_high_ttest)[1,] <- TRUE
+bottom_border(low_high_ttest)[0:1,] <- .4
+align(low_high_ttest) <- "center"
+stripe_rows(low_high_ttest, stripe1 = "white", stripe2 = "grey90")
+```
+
+
+# Regressions on Ukraine
+
+```{r, echo = FALSE}
+
+# Regressions no lag
+basic_reg <- lm(percent_change_ukraine ~ percent_change_aid + percent_change_russia, data = byweek_data)
+
+# Regressions one week lag
+basic_reg_lag1 <- lm(percent_change_ukraine ~ week_lag_percent_aid + percent_change_russia, data = byweek_data)
+
+# Regressions two week lag
+basic_reg_lag2 <- lm(percent_change_ukraine ~ twoweek_lag_percent_aid + percent_change_russia, data = byweek_data)
+
+# Instrument
+inst_basic <- ivreg(formula = percent_change_ukraine ~ percent_change_aid + percent_change_russia | search_score + percent_change_russia, data = byweek_data)
+
+output <- huxreg(basic_reg, 
+                basic_reg_lag1, 
+                basic_reg_lag2, 
+                inst_basic,
+                 coefs = c("Aid" = "percent_change_aid", 
+                           "Russian-instigated events change (%)" = "percent_change_russia",
+                           "Aid lagged one week" = "week_lag_percent_aid", 
+                           "Aid lagged two weeks" = "twoweek_lag_percent_aid")) %>%
+  set_caption("Percent Change Aid") %>%
+  set_markdown_contents(1, 2, "OLS") %>%
+  set_markdown_contents(1, 3, "OLS") %>%
+  set_markdown_contents(1, 4, "OLS") %>%
+  set_markdown_contents(1, 5, "2SLS") 
+output
+```
+
+```{r, echo = FALSE}
+# Dummy variable regressions
+
+# Regressions dummy no lag
+basic_dummy <- lm(percent_change_ukraine ~ aidgiven + percent_change_russia, data = byweek_data)
+
+# Regressions one week lag
+basic_dummy_lag1 <- lm(percent_change_ukraine ~ aidgiven_week_lag + percent_change_russia, data = byweek_data)
+
+# Regressions two week lag
+basic_dummy_lag2 <- lm(percent_change_ukraine ~ aidgiven_twoweek_lag + percent_change_russia, data = byweek_data)
+
+# Instrument
+inst_basic_dummy <- ivreg(formula = percent_change_ukraine ~ aidgiven + percent_change_russia | search_score + percent_change_russia, data = byweek_data)
+
+output_dummy <- huxreg(basic_dummy,
+                       basic_dummy_lag1, 
+                       basic_dummy_lag2, 
+                       inst_basic_dummy,
+                 coefs = c("Aid" = "aidgiven", 
+                           "Russian-instigated events change (%)" = "percent_change_russia",
+                           "Aid lagged one week" = "aidgiven_week_lag", 
+                           "Aid lagged two weeks" = "aidgiven_twoweek_lag")) %>%
+  set_caption("Aid as a Dummy Variable") %>%
+  set_markdown_contents(1, 2, "OLS") %>%
+  set_markdown_contents(1, 3, "OLS") %>%
+  set_markdown_contents(1, 4, "OLS") %>%
+  set_markdown_contents(1, 5, "2SLS") 
+output_dummy
+```
+
+
+# Regressions on Russia
+
+```{r}
+# Russia regressions no lag
+basic_reg_russia <- lm(percent_change_russia ~ percent_change_aid + percent_change_ukraine, data = byweek_data)
+
+# Regressions one week lag
+basic_reg_lag1_russia <- lm(percent_change_russia ~ week_lag_percent_aid + percent_change_ukraine, data = byweek_data)
+
+# Regressions two week lag
+basic_reg_lag2_russia <- lm(percent_change_russia ~ twoweek_lag_percent_aid + percent_change_ukraine, data = byweek_data)
+
+# Instrument
+inst_basic_russia <- ivreg(formula = percent_change_russia ~ percent_change_aid + percent_change_ukraine | search_score + percent_change_ukraine, data = byweek_data)
+
+output_russia <- huxreg(basic_reg_russia, 
+                basic_reg_lag1_russia, 
+                basic_reg_lag2_russia, 
+                inst_basic_russia,
+                 coefs = c("Aid" = "percent_change_aid", 
+                           "Ukrainian-instigated events change (%)" = "percent_change_ukraine",
+                           "Aid lagged one week" = "week_lag_percent_aid", 
+                           "Aid lagged two weeks" = "twoweek_lag_percent_aid")) %>%
+  set_caption("Percent Change Aid Russia") %>%
+  set_markdown_contents(1, 2, "OLS") %>%
+  set_markdown_contents(1, 3, "OLS") %>%
+  set_markdown_contents(1, 4, "OLS") %>%
+  set_markdown_contents(1, 5, "2SLS") 
+output_russia
+```
+
+```{r}
+# Russia dummy variable regressions
+
+# Regressions dummy no lag
+basic_dummy_russia <- lm(percent_change_russia ~ aidgiven + percent_change_ukraine, data = byweek_data)
+
+# Regressions one week lag
+basic_dummy_lag1_russia <- lm(percent_change_russia ~ aidgiven_week_lag + percent_change_ukraine, data = byweek_data)
+
+# Regressions two week lag
+basic_dummy_lag2_russia <- lm(percent_change_russia ~ aidgiven_twoweek_lag + percent_change_ukraine, data = byweek_data)
+
+# Instrument
+inst_dummy_russia <- ivreg(formula = percent_change_russia ~ aidgiven + percent_change_ukraine | search_score + percent_change_ukraine, data = byweek_data)
+
+output_dummy_russia <- huxreg(basic_dummy_russia,
+                       basic_dummy_lag1_russia, 
+                       basic_dummy_lag2_russia, 
+                       inst_dummy_russia,
+                 coefs = c("Aid" = "aidgiven", 
+                           "Ukrainian-instigated events change (%)" = "percent_change_ukraine",
+                           "Aid lagged one week" = "aidgiven_week_lag", 
+                           "Aid lagged two weeks" = "aidgiven_twoweek_lag")) %>%
+  set_caption("Aid as a Dummy Variable Russia") %>%
+  set_markdown_contents(1, 2, "OLS") %>%
+  set_markdown_contents(1, 3, "OLS") %>%
+  set_markdown_contents(1, 4, "OLS") %>%
+  set_markdown_contents(1, 5, "2SLS") 
+output_dummy_russia
+```
+
+
+# Missile regressions 
+
+```{r}
+# Missiles regressions
+
+# Patriot aid on missile use (expect to decrease)
+missile_reg <- lm(russian_missiles ~ patriot_aid, data = byweek_data)
+summary(missile_reg)
+
+# Patriot aid on drone use (expect to increase)
+missile_reg_drone <- lm(russian_drones ~ patriot_aid, data = byweek_data)
+summary(missile_reg_drone)
+
+# ex <- lm(russian_missiles ~ russian_drones, data = byweek_data)
+# summary(ex)
+```
+
+
+```{r, echo = FALSE}
+# Graph comparing the amount of aid and events percentage ranges 
+# 
+# ggplot(aes(x = aidgiven), data = byweek_data) + 
+#   geom_col(aes(y = percent_change_ukraine))
+```
+
+```{r}
+ggplot(aes(x = week), data = byweek_data) +
+  geom_smooth(aes(y = rescale(russian_missiles), color = "Russian missile use")) + 
+  geom_smooth(aes(y = rescale(russian_drones), color = "Russian drone use")) + 
+  geom_smooth(aes(y = rescale(patriot_aid), color = "Patriot aid provided")) + 
+  scale_color_manual(values = c("Russian missile use" = "navyblue", "Russian drone use" = "orange", "Patriot aid provided" = "red")) +
+  labs(title = "Russian Missile and Drone Use Compared with Patriot Aid", 
+       x = "Week", 
+       y = "Rescaled Amounts", 
+       color = "Legend") + 
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"), 
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"))
+  
+```
+
