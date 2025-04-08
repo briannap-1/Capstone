@@ -29,12 +29,13 @@ library(patchwork)
 aid_data <- read.csv("/Users/briannapenkala/Downloads/Capstone/Aid CSV.csv")
 
 # Fixing things
-aid_data <- aid_data[,c(3,4,5,7,10,13,20,50)]
+aid_data <- aid_data[,c(3,4,5,7,10,13,20,23,51)]
 aid_data$tot_activity_value_constant_currency <- gsub(",", "", aid_data$tot_activity_value_constant_currency) #euros
 aid_data <- aid_data %>%
   mutate(tot_activity_value_constant_currency = as.numeric(tot_activity_value_constant_currency)) %>%
   mutate(announcement_date = as.Date(announcement_date, format = "%m/%d/%y")) %>%
   rename(date = announcement_date)
+aid_data$antidrone_aid[is.na(aid_data$antidrone_aid)] <- 0
 
 # Fixing Finland typo ****************** (check for consistency in case rows change)
 aid_data <- aid_data %>%
@@ -135,10 +136,17 @@ weekly_event_sum <- weekly_event_sum %>%
   w2w_change_ru = russian_instigated_events - lag(russian_instigated_events),  #this lag is only to calculate the percent change
   percent_change_russia = (w2w_change_ru / lag(russian_instigated_events)) * 100)
 
-#weekly_events_nodrones <- week
-
+# Dataset for missile regressions
 missile_events <- events_data %>%
   filter(russian_missiles == 1)
+
+# Dataset for drone regressions
+drones_dataset <- events_data %>%
+  filter(russian_drones == 1)
+antidrone_aid_df <- data.frame(date = aid_data$date, antidrone_aid = aid_data$antidrone_aid)
+drones_dataset <- full_join(drones_dataset[,c(1,13,14,24)], antidrone_aid_df, by = "date")
+drones_dataset$antidrone_aid[is.na(drones_dataset$antidrone_aid)] <- 0
+drones_dataset$week_lag_aid <- lag(drones_dataset$antidrone_aid, 2)
 
 monthly_event_sum <- events_data %>%
   filter(!is.na(date)) %>%
@@ -276,6 +284,8 @@ ggplot(aes(abs_ukraine, abs_ukraine/100), data = both25) +
 
 ## Summary stats
 
+Summary Statistics
+
 ```{r, results = 'asis', echo = FALSE}
 labeled_data <- byweek_data[,c("week", "weekly_aid_total", "percent_change_aid", "weekly_event_total", "ukrainian_instigated_events", "russian_instigated_events", "percent_change_total", "percent_change_ukraine", "percent_change_russia", "search_score")]
 
@@ -287,7 +297,7 @@ labeled_data <- byweek_data[,c("week", "weekly_aid_total", "percent_change_aid",
 #   )
 
 names(labeled_data) <- c("Week","Weekly aid total (euro)", "Change in aid (%)", "Weekly event total", "Ukrainian instigated events", "Russian instigated events", "Change in total events (%)", "Change in Ukrainian events (%)", "Change in Russian events (%)", "Search score")
-summ_stats <- stargazer(labeled_data, type = "text", summary = TRUE, iqr = TRUE, font.size = "scriptsize")
+summ_stats <- stargazer(labeled_data, type = "latex", summary = TRUE, iqr = TRUE, font.size = "scriptsize", title = "Summary Statistics")
 ```
 
 ## Correlation matrix
@@ -466,17 +476,17 @@ aid_country
 ukr_rus_events <- ggplot(byweek_data) + 
   geom_smooth(aes(x = week, y = percent_change_ukraine, color = "Change in Ukrainian events"), method = "loess", span = .09, se = FALSE) + 
   geom_smooth(aes(x = week, y = percent_change_russia, color = "Change in Russian events"), method = "loess", span = .09, se = FALSE) + 
-  scale_color_manual(values = c("Change in Ukrainian events" = "cadetblue4", "Change in Russian events" = "lightsalmon2")) +
+  scale_color_manual(values = c("Change in Ukrainian events" = "blue", "Change in Russian events" = "red")) +
   labs(title = "Russian and Ukrainian Instigated Events Over Time", 
        x = "Week", 
        y = "Percent Change in Events", 
-       color = "Legend") + 
-  theme_minimal(base_family = "Times New Roman") +
-  theme(
-    text = element_text(family = "Times New Roman"),
-    axis.title = element_text(family = "Times New Roman"), 
-    axis.text = element_text(family = "Times New Roman"),
-    plot.title = element_text(family = "Times New Roman"))
+       color = "Legend") 
+  # theme_minimal(base_family = "Times New Roman") +
+  # theme(
+  #   text = element_text(family = "Times New Roman"),
+  #   axis.title = element_text(family = "Times New Roman"), 
+  #   axis.text = element_text(family = "Times New Roman"),
+  #   plot.title = element_text(family = "Times New Roman"))
 
 ukr_rus_events
 ```
@@ -492,16 +502,21 @@ missile_after1 <- missiles_sf %>% filter(date >= as.Date("2022-12-21") & date < 
 
 missile_map_before1 <- ggplot() + 
   geom_sf(data = ukraine, fill = "white", color = "black") + 
-  geom_sf(data = missile_before1 , color = "red", alpha = 0.2) +
-  ggtitle("Before Patriot Deployment")
+  geom_sf(data = missile_before1 , color = "blue", alpha = 0.2) +
+  ggtitle("Before Patriot Deployment") +
+  theme(plot.title = element_text(size = 9))
 
 missile_map_after1 <- ggplot() + 
   geom_sf(data = ukraine, fill = "white", color = "black") + 
   geom_sf(data = missile_after1 , color = "blue", alpha = 0.2) +
-  ggtitle("After Patriot Deployment")
+  ggtitle("After Patriot Deployment") + 
+  theme(plot.title = element_text(size = 9))
+        
 (missile_map_before1 + missile_map_after1) +
    plot_annotation(
-    title = "Missile Attacks in Ukraine Before and After Patriot Deployment")
+    title = "Missile Attacks in Ukraine Before and After Patriot Deployment",
+    #caption = "Before = 02/22/2022 - 12/21/2022. After = 12/21/2022 - 06/21/2023"
+  )
 ```
 
 ## T-tests
@@ -690,6 +705,12 @@ summary(missile_reg_drone)
 ex <- lm(russian_missiles ~ russian_drones, data = byweek_data)
 summary(ex)
 ```
+```{r}
+# Drone regressions (russian drone activity on anti drone aid)
+antidrone_reg <- lm(russian_drones ~ week_lag_aid, data = drones_dataset)
+summary(antidrone_reg)
+```
+
 
 ```{r, echo = FALSE}
 # Graph comparing the amount of aid and events percentage ranges 
@@ -703,7 +724,7 @@ ggplot(aes(x = week), data = byweek_data) +
   geom_smooth(aes(y = rescale(russian_missiles), color = "Russian missile use")) + 
   geom_smooth(aes(y = rescale(russian_drones), color = "Russian drone use")) + 
   geom_smooth(aes(y = rescale(patriot_aid), color = "Patriot aid provided")) + 
-  scale_color_manual(values = c("Russian missile use" = "navyblue", "Russian drone use" = "orange", "Patriot aid provided" = "red")) +
+  scale_color_manual(values = c("Russian missile use" = "blue", "Russian drone use" = "orange", "Patriot aid provided" = "red")) +
   labs(title = "Russian Missile and Drone Use Compared with Patriot Aid", 
        x = "Week", 
        y = "Rescaled Amounts", 
