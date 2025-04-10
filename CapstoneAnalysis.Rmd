@@ -6,6 +6,8 @@ output:
   pdf_document: default
   html_document: default
   word_document: default
+header-includes:
+    - \usepackage{caption}
 ---
 
 ```{r setup, include=FALSE, echo = FALSE}
@@ -19,7 +21,11 @@ library(huxtable)
 library(ivreg)
 library(sf)
 library(patchwork)
+library(broom)
+library(sandwich)
 ```
+
+\captionsetup[table]{labelformat=empty}
 
 ## Data structuring 
 
@@ -91,6 +97,7 @@ weekly_aid_sum$percent_change_aid <- ifelse(is.na(weekly_aid_sum$percent_change_
 weekly_aid_sum$week_lag_percent_aid <- ifelse(is.na(weekly_aid_sum$week_lag_percent_aid) | is.infinite(weekly_aid_sum$week_lag_percent_aid), 0, weekly_aid_sum$week_lag_percent_aid)
 weekly_aid_sum$twoweek_lag_percent_aid <- ifelse(is.na(weekly_aid_sum$twoweek_lag_percent_aid) | is.infinite(weekly_aid_sum$twoweek_lag_percent_aid), 0, weekly_aid_sum$twoweek_lag_percent_aid)
 
+
 weekly_aid_sum <- weekly_aid_sum[5:145,]
 ```
 
@@ -104,6 +111,15 @@ events_data <- events_data %>%
   rename(date = event_date) %>%
   mutate(russian_missiles = as.numeric(russian_missiles),
          russian_drones = as.numeric(russian_drones))
+
+# Setting up weather data
+weather_data <- read.csv("/Users/briannapenkala/Downloads/Capstone/48.36007018, 36.64711407 2022-02-07 to 2024-10-31.csv")
+weather_data <- rename(weather_data, date = datetime) %>%
+  mutate(date = as.Date(date, format("%Y-%m-%d")))
+weather_data <- weather_data[,c(2,11,18)]
+
+# Joining weather data and events data
+events_data <- left_join(events_data, weather_data, by = "date")
 
 # # Summarizing by day
 # daily_event_df <- events_data %>%
@@ -120,7 +136,9 @@ weekly_event_sum <- events_data %>%
   summarize(weekly_event_total = n(), 
             ukrainian_instigated_events = sum(AggressorCoded), 
             russian_missiles = sum(russian_missiles), 
-            russian_drones = sum(russian_drones))
+            russian_drones = sum(russian_drones), 
+            avg_precip = round(mean(precip), 3), 
+            avg_windspeed = round(mean(windspeed), 3))
 
 weekly_event_sum$russian_instigated_events <- weekly_event_sum$weekly_event_total - weekly_event_sum$ukrainian_instigated_events
 
@@ -183,6 +201,8 @@ byweek_data <- byweek_data %>%
     absaidpercentchange = abs(percent_change_aid)) %>%
   mutate(aidgiven_week_lag = lag(aidgiven)) %>%
   mutate(aidgiven_twoweek_lag = lag(aidgiven, 2))
+byweek_data$aidgiven_week_lag <- ifelse(is.na(byweek_data$aidgiven_week_lag), 0, byweek_data$aidgiven_week_lag)
+byweek_data$aidgiven_twoweek_lag <- ifelse(is.na(byweek_data$aidgiven_twoweek_lag), 0, byweek_data$aidgiven_twoweek_lag)
 ```
 
 ## Top/bottom analysis
@@ -287,17 +307,10 @@ ggplot(aes(abs_ukraine, abs_ukraine/100), data = both25) +
 Summary Statistics
 
 ```{r, results = 'asis', echo = FALSE}
-labeled_data <- byweek_data[,c("week", "weekly_aid_total", "percent_change_aid", "weekly_event_total", "ukrainian_instigated_events", "russian_instigated_events", "percent_change_total", "percent_change_ukraine", "percent_change_russia", "search_score")]
+labeled_data <- byweek_data[,c("week", "weekly_aid_total", "percent_change_aid", "weekly_event_total", "russian_missiles", "russian_drones", "percent_change_total", "percent_change_ukraine", "percent_change_russia", "search_score")]
 
-# labeled_data <- labeled_data %>%
-#   mutate(
-#     percent_change_total = percent(round(percent_change_total, 3)),
-#     percent_change_ukraine = percent(round(percent_change_ukraine, 3)),
-#     percent_change_russia = percent(round(percent_change_russia, 3)),
-#   )
-
-names(labeled_data) <- c("Week","Weekly aid total (euro)", "Change in aid (%)", "Weekly event total", "Ukrainian instigated events", "Russian instigated events", "Change in total events (%)", "Change in Ukrainian events (%)", "Change in Russian events (%)", "Search score")
-summ_stats <- stargazer(labeled_data, type = "latex", summary = TRUE, iqr = TRUE, font.size = "scriptsize", title = "Summary Statistics")
+names(labeled_data) <- c("Week","Weekly aid total (euro)", "Change in aid (%)", "Weekly event total", "Russian missile use", "Russian drone use", "Change in total events (%)", "Change in Ukrainian events (%)", "Change in Russian events (%)", "Search score")
+summ_stats <- stargazer(labeled_data, type = "latex", summary = TRUE, font.size = "scriptsize", title = "Summary Statistics", digits = 2)
 ```
 
 ## Correlation matrix
@@ -310,6 +323,9 @@ par(family = "Times New Roman")
 # Correlation plot (https://www.sthda.com/english/wiki/visualize-correlation-matrix-using-correlogram)
 corrplot <- corrplot(corr_matrix, type = "upper", method = "color", order = "hclust", tl.col = "black", tl.srt = 45, tl.cex = .9, addCoef.col = "darkgrey", outline = TRUE)
 # (type is layout, hclust is heirarchical ordering)
+
+corr_test <- cor(byweek_data[,c(5,12,13,18,20,21)], use = "complete.obs")
+corrplot_test <- corrplot(corr_test,  method = "color", order = "hclust", tl.col = "black", tl.srt = 45, tl.cex = .9, addCoef.col = "darkgrey", outline = TRUE)
 ```
 
 ## Visualizations
@@ -480,13 +496,13 @@ ukr_rus_events <- ggplot(byweek_data) +
   labs(title = "Russian and Ukrainian Instigated Events Over Time", 
        x = "Week", 
        y = "Percent Change in Events", 
-       color = "Legend") 
-  # theme_minimal(base_family = "Times New Roman") +
-  # theme(
-  #   text = element_text(family = "Times New Roman"),
-  #   axis.title = element_text(family = "Times New Roman"), 
-  #   axis.text = element_text(family = "Times New Roman"),
-  #   plot.title = element_text(family = "Times New Roman"))
+       color = "Legend") +
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"),
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"))
 
 ukr_rus_events
 ```
@@ -504,19 +520,30 @@ missile_map_before1 <- ggplot() +
   geom_sf(data = ukraine, fill = "white", color = "black") + 
   geom_sf(data = missile_before1 , color = "blue", alpha = 0.2) +
   ggtitle("Before Patriot Deployment") +
-  theme(plot.title = element_text(size = 9))
+  theme(plot.title = element_text(size = 9)) + 
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"),
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"))
 
 missile_map_after1 <- ggplot() + 
   geom_sf(data = ukraine, fill = "white", color = "black") + 
   geom_sf(data = missile_after1 , color = "blue", alpha = 0.2) +
-  ggtitle("After Patriot Deployment") + 
-  theme(plot.title = element_text(size = 9))
+  ggtitle("After Patriot Deployment") +
+  theme_minimal(base_family = "Times New Roman") +
+  theme(
+    text = element_text(family = "Times New Roman"),
+    axis.title = element_text(family = "Times New Roman"),
+    axis.text = element_text(family = "Times New Roman"),
+    plot.title = element_text(family = "Times New Roman"))
         
 (missile_map_before1 + missile_map_after1) +
    plot_annotation(
-    title = "Missile Attacks in Ukraine Before and After Patriot Deployment",
+    title = "Missile Attacks in Ukraine Before and After Patriot Deployment", 
+    theme = theme(plot.title = element_text(family = "Times New Roman")))
     #caption = "Before = 02/22/2022 - 12/21/2022. After = 12/21/2022 - 06/21/2023"
-  )
 ```
 
 ## T-tests
@@ -539,6 +566,7 @@ bold(ru_uk_table)[1,] <- TRUE
 bottom_border(ru_uk_table)[0:1,] <- .4
 align(ru_uk_table) <- "center"
 stripe_rows(ru_uk_table, stripe1 = "white", stripe2 = "grey90")
+set_caption(ru_uk_table, "Comparison of Mean Ukrainian and Russian-Instigated Events")
 ```
 
 ```{r, echo = FALSE}
@@ -562,6 +590,7 @@ bold(low_high_ttest)[1,] <- TRUE
 bottom_border(low_high_ttest)[0:1,] <- .4
 align(low_high_ttest) <- "center"
 stripe_rows(low_high_ttest, stripe1 = "white", stripe2 = "grey90")
+set_caption(low_high_ttest, "Comparison of Mean Ukrainian Event Percent Changes in High and Low Aid Periods")
 ```
 
 # Regressions on Ukraine
@@ -569,16 +598,17 @@ stripe_rows(low_high_ttest, stripe1 = "white", stripe2 = "grey90")
 ```{r, echo = FALSE}
 
 # Regressions no lag
-basic_reg <- lm(percent_change_ukraine ~ percent_change_aid + percent_change_russia, data = byweek_data)
+basic_reg <- lm(percent_change_ukraine ~ percent_change_aid + percent_change_russia + avg_precip + avg_windspeed, data = byweek_data)
 
 # Regressions one week lag
-basic_reg_lag1 <- lm(percent_change_ukraine ~ week_lag_percent_aid + percent_change_russia, data = byweek_data)
+basic_reg_lag1 <- lm(percent_change_ukraine ~ week_lag_percent_aid + percent_change_russia + avg_precip + avg_windspeed, data = byweek_data)
 
 # Regressions two week lag
-basic_reg_lag2 <- lm(percent_change_ukraine ~ twoweek_lag_percent_aid + percent_change_russia, data = byweek_data)
+basic_reg_lag2 <- lm(percent_change_ukraine ~ twoweek_lag_percent_aid + percent_change_russia + avg_precip + avg_windspeed, data = byweek_data)
 
 # Instrument
-inst_basic <- ivreg(formula = percent_change_ukraine ~ percent_change_aid + percent_change_russia | search_score + percent_change_russia, data = byweek_data)
+inst_basic <- ivreg(formula = percent_change_ukraine ~ percent_change_aid + percent_change_russia + avg_precip + avg_windspeed | search_score, data = byweek_data)
+summary(inst_basic)
 
 output <- huxreg(basic_reg, 
                 basic_reg_lag1, 
@@ -587,7 +617,9 @@ output <- huxreg(basic_reg,
                  coefs = c("Aid" = "percent_change_aid", 
                            "Russian-instigated events change (%)" = "percent_change_russia",
                            "Aid lagged one week" = "week_lag_percent_aid", 
-                           "Aid lagged two weeks" = "twoweek_lag_percent_aid")) %>%
+                           "Aid lagged two weeks" = "twoweek_lag_percent_aid", 
+                           "Average precipitation" = "avg_precip", 
+                           "Average wind speed" = "avg_windspeed")) %>%
   set_caption("Percent Change Aid") %>%
   set_markdown_contents(1, 2, "OLS") %>%
   set_markdown_contents(1, 3, "OLS") %>%
@@ -596,29 +628,52 @@ output <- huxreg(basic_reg,
 output
 ```
 
+
+
+Where UVE shows Ukrainian-instigated events; RVE shows Russian-instigated events
+
 ```{r, echo = FALSE}
 # Dummy variable regressions
 
 # Regressions dummy no lag
-basic_dummy <- lm(percent_change_ukraine ~ aidgiven + percent_change_russia, data = byweek_data)
+basic_dummy <- lm(percent_change_ukraine ~ aidgiven + percent_change_russia + avg_precip + avg_windspeed, data = byweek_data)
 
 # Regressions one week lag
-basic_dummy_lag1 <- lm(percent_change_ukraine ~ aidgiven_week_lag + percent_change_russia, data = byweek_data)
+basic_dummy_lag1 <- lm(percent_change_ukraine ~ aidgiven_week_lag + percent_change_russia + avg_precip + avg_windspeed, data = byweek_data)
 
 # Regressions two week lag
-basic_dummy_lag2 <- lm(percent_change_ukraine ~ aidgiven_twoweek_lag + percent_change_russia, data = byweek_data)
+basic_dummy_lag2 <- lm(percent_change_ukraine ~ aidgiven_twoweek_lag + percent_change_russia + avg_precip + avg_windspeed, data = byweek_data)
 
 # Instrument
-inst_basic_dummy <- ivreg(formula = percent_change_ukraine ~ aidgiven + percent_change_russia | search_score + percent_change_russia, data = byweek_data)
+first_stage_aid_dummy <- lm(aidgiven ~ search_score, data = byweek_data)
+fitted_aid_dummy <- fitted(first_stage_aid_dummy)
+second_stage_aid_dummy <- lm(percent_change_ukraine ~ fitted_aid_dummy + percent_change_russia  + avg_precip + avg_windspeed, data = byweek_data)
+
+# Week lag
+first_stage_aid_dummy_lag <- lm(aidgiven_week_lag ~ search_score, data = byweek_data)
+fitted_aid_dummy_lag <- fitted(first_stage_aid_dummy_lag)
+second_stage_aid_dummy_lag <- lm(percent_change_ukraine ~ fitted_aid_dummy_lag + percent_change_russia  + avg_precip + avg_windspeed, data = byweek_data)
+
+first_stage_aid_dummy_lag2 <- lm(aidgiven_twoweek_lag ~ search_score, data = byweek_data)
+fitted_aid_dummy_lag2 <- fitted(first_stage_aid_dummy_lag2)
+second_stage_aid_dummy_lag2 <- lm(percent_change_ukraine ~ fitted_aid_dummy_lag2 + percent_change_russia  + avg_precip + avg_windspeed, data = byweek_data)
+#inst_basic_dummy <- ivreg(formula = percent_change_ukraine ~ aidgiven + percent_change_russia  + avg_precip + avg_windspeed | search_score, data = byweek_data)
 
 output_dummy <- huxreg(basic_dummy,
                        basic_dummy_lag1, 
                        basic_dummy_lag2, 
-                       inst_basic_dummy,
-                 coefs = c("Aid" = "aidgiven", 
-                           "Russian-instigated events change (%)" = "percent_change_russia",
+                       second_stage_aid_dummy,
+                       second_stage_aid_dummy_lag, 
+                       second_stage_aid_dummy_lag2,
+                 coefs = c("Aid" = "aidgiven",
+                           "Aid" = "fitted_aid_dummy", 
                            "Aid lagged one week" = "aidgiven_week_lag", 
-                           "Aid lagged two weeks" = "aidgiven_twoweek_lag")) %>%
+                           "Aid lagged one week" = "fitted_aid_dummy_lag", 
+                           "Aid lagged two weeks" = "fitted_aid_dummy_lag2",
+                           "Aid lagged two weeks" = "aidgiven_twoweek_lag",
+                           "Russian-instigated events change (%)" = "percent_change_russia",
+                           "Average precipitation" = "avg_precip", 
+                           "Average wind speed" = "avg_windspeed")) %>%
   set_caption("Aid as a Dummy Variable") %>%
   set_markdown_contents(1, 2, "OLS") %>%
   set_markdown_contents(1, 3, "OLS") %>%
@@ -626,6 +681,12 @@ output_dummy <- huxreg(basic_dummy,
   set_markdown_contents(1, 5, "2SLS") 
 output_dummy
 ```
+
+First stage:
+$$ {AidGiven_W} = \beta_0 + \beta_1\text{SearchScore}_W + u_W $$
+
+Second stage:
+$$ {UVE_W} = \beta_0 + \beta_1 \text{MilitaryAid}_{W-lag} + \beta_2 \text{RVE}_W + \beta_3 \text{AveragePrecipitation}_W + \beta_4 \text{AverageWindSpeed}_W + u_W $$
 
 # Regressions on Russia
 
@@ -696,16 +757,30 @@ output_dummy_russia
 
 # Patriot aid on missile use (expect to decrease)
 missile_reg <- lm(russian_missiles ~ patriot_aid, data = byweek_data)
-summary(missile_reg)
 
+missile_reg_controlled <- lm(russian_missiles ~ patriot_aid + russian_drones, data = byweek_data)
+
+missile_reg_inst <- ivreg(russian_missiles ~ patriot_aid + russian_drones | search_score + russian_drones, data = byweek_data)
+
+output_missile <- huxreg(missile_reg, 
+                missile_reg_controlled, 
+                coefs = c("Patriot aid" = "patriot_aid", 
+                           "Russian drones" = "russian_drones")) %>%
+  set_caption("Russian Missile Use on Patriot Aid") %>%
+  set_markdown_contents(1, 2, "OLS") %>%
+  set_markdown_contents(1, 3, "OLS") 
+output_missile
+```
+
+$$ {RussianMissileUse_W} = \beta_0 + \beta_1 \text{PatriotAid}_W + \beta_2 \text{RussianDroneUse}_W + u_W $$
+```{r}
 # Patriot aid on drone use (expect to increase)
 missile_reg_drone <- lm(russian_drones ~ patriot_aid, data = byweek_data)
 summary(missile_reg_drone)
 
 ex <- lm(russian_missiles ~ russian_drones, data = byweek_data)
 summary(ex)
-```
-```{r}
+
 # Drone regressions (russian drone activity on anti drone aid)
 antidrone_reg <- lm(russian_drones ~ week_lag_aid, data = drones_dataset)
 summary(antidrone_reg)
