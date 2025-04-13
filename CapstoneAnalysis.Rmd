@@ -542,8 +542,9 @@ missile_map_after1 <- ggplot() +
 (missile_map_before1 + missile_map_after1) +
    plot_annotation(
     title = "Missile Attacks in Ukraine Before and After Patriot Deployment", 
-    theme = theme(plot.title = element_text(family = "Times New Roman")))
-    #caption = "Before = 02/22/2022 - 12/21/2022. After = 12/21/2022 - 06/21/2023"
+    caption = "Before = 02/22/2022 - 12/21/2022; After = 12/21/2022 - 06/21/2023",
+    theme = theme(plot.title = element_text(family = "Times New Roman"), 
+                  plot.caption = element_text(family = "Times New Roman")))
 ```
 
 ## T-tests
@@ -606,33 +607,30 @@ basic_reg_lag1 <- lm(percent_change_ukraine ~ week_lag_percent_aid + percent_cha
 # Regressions two week lag
 basic_reg_lag2 <- lm(percent_change_ukraine ~ twoweek_lag_percent_aid + percent_change_russia + avg_precip + avg_windspeed, data = byweek_data)
 
-# Instrument
-inst_basic <- ivreg(formula = percent_change_ukraine ~ percent_change_aid + percent_change_russia + avg_precip + avg_windspeed | search_score, data = byweek_data)
-summary(inst_basic)
-
-output <- huxreg(basic_reg, 
-                basic_reg_lag1, 
-                basic_reg_lag2, 
-                inst_basic,
-                 coefs = c("Aid" = "percent_change_aid", 
-                           "Russian-instigated events change (%)" = "percent_change_russia",
-                           "Aid lagged one week" = "week_lag_percent_aid", 
-                           "Aid lagged two weeks" = "twoweek_lag_percent_aid", 
-                           "Average precipitation" = "avg_precip", 
-                           "Average wind speed" = "avg_windspeed")) %>%
-  set_caption("Percent Change Aid") %>%
-  set_markdown_contents(1, 2, "OLS") %>%
-  set_markdown_contents(1, 3, "OLS") %>%
-  set_markdown_contents(1, 4, "OLS") %>%
-  set_markdown_contents(1, 5, "2SLS") 
-output
+# # Instrument
+# #inst_basic <- ivreg(formula = percent_change_ukraine ~ percent_change_aid + percent_change_russia + avg_precip + avg_windspeed | search_score, data = byweek_data)
+# 
+# output <- huxreg(basic_reg, 
+#                 basic_reg_lag1, 
+#                 basic_reg_lag2, 
+#                 #inst_basic,
+#                  coefs = c("Aid" = "percent_change_aid", 
+#                            "Russian-instigated events change (%)" = "percent_change_russia",
+#                            "Aid lagged one week" = "week_lag_percent_aid", 
+#                            "Aid lagged two weeks" = "twoweek_lag_percent_aid", 
+#                            "Average precipitation" = "avg_precip", 
+#                            "Average wind speed" = "avg_windspeed")) %>%
+#   set_caption("Percent Change Aid") %>%
+#   set_markdown_contents(1, 2, "OLS") %>%
+#   set_markdown_contents(1, 3, "OLS") %>%
+#   set_markdown_contents(1, 4, "OLS") %>%
+#  # set_markdown_contents(1, 5, "2SLS") 
+# output
 ```
 
 
-
-Where UVE shows Ukrainian-instigated events; RVE shows Russian-instigated events
-
 ```{r, echo = FALSE}
+
 # Dummy variable regressions
 
 # Regressions dummy no lag
@@ -649,6 +647,8 @@ first_stage_aid_dummy <- lm(aidgiven ~ search_score, data = byweek_data)
 fitted_aid_dummy <- fitted(first_stage_aid_dummy)
 second_stage_aid_dummy <- lm(percent_change_ukraine ~ fitted_aid_dummy + percent_change_russia  + avg_precip + avg_windspeed, data = byweek_data)
 
+
+summary(first_stage_aid_dummy)
 # Week lag
 first_stage_aid_dummy_lag <- lm(aidgiven_week_lag ~ search_score, data = byweek_data)
 fitted_aid_dummy_lag <- fitted(first_stage_aid_dummy_lag)
@@ -656,7 +656,7 @@ second_stage_aid_dummy_lag <- lm(percent_change_ukraine ~ fitted_aid_dummy_lag +
 
 first_stage_aid_dummy_lag2 <- lm(aidgiven_twoweek_lag ~ search_score, data = byweek_data)
 fitted_aid_dummy_lag2 <- fitted(first_stage_aid_dummy_lag2)
-second_stage_aid_dummy_lag2 <- lm(percent_change_ukraine ~ fitted_aid_dummy_lag2 + percent_change_russia  + avg_precip + avg_windspeed, data = byweek_data)
+second_stage_aid_dummy_lag2 <- lm(percent_change_ukraine ~ fitted_aid_dummy_lag2 + percent_change_russia + avg_precip + avg_windspeed, data = byweek_data)
 #inst_basic_dummy <- ivreg(formula = percent_change_ukraine ~ aidgiven + percent_change_russia  + avg_precip + avg_windspeed | search_score, data = byweek_data)
 
 output_dummy <- huxreg(basic_dummy,
@@ -665,28 +665,33 @@ output_dummy <- huxreg(basic_dummy,
                        second_stage_aid_dummy,
                        second_stage_aid_dummy_lag, 
                        second_stage_aid_dummy_lag2,
-                 coefs = c("Aid" = "aidgiven",
-                           "Aid" = "fitted_aid_dummy", 
-                           "Aid lagged one week" = "aidgiven_week_lag", 
-                           "Aid lagged one week" = "fitted_aid_dummy_lag", 
-                           "Aid lagged two weeks" = "fitted_aid_dummy_lag2",
-                           "Aid lagged two weeks" = "aidgiven_twoweek_lag",
+                 coefs = c("Constant" = "(Intercept)",
+                           "Aid (dummy)" = "aidgiven",
+                           "Aid (dummy)" = "fitted_aid_dummy", 
+                           "Aid lagged one week (dummy)" = "aidgiven_week_lag", 
+                           "Aid lagged one week (dummy)" = "fitted_aid_dummy_lag", 
+                           "Aid lagged two weeks (dummy)" = "fitted_aid_dummy_lag2",
+                           "Aid lagged two weeks (dummy)" = "aidgiven_twoweek_lag",
                            "Russian-instigated events change (%)" = "percent_change_russia",
                            "Average precipitation" = "avg_precip", 
                            "Average wind speed" = "avg_windspeed")) %>%
-  set_caption("Aid as a Dummy Variable") %>%
+  set_caption("Ukrainian-Instigated Events on an Aid Dummy Variable") %>%
   set_markdown_contents(1, 2, "OLS") %>%
   set_markdown_contents(1, 3, "OLS") %>%
   set_markdown_contents(1, 4, "OLS") %>%
-  set_markdown_contents(1, 5, "2SLS") 
+  set_markdown_contents(1, 5, "2SLS") %>%
+  set_markdown_contents(1, 6, "2SLS") %>%
+  set_markdown_contents(1, 7, "2SLS")
+output_dummy <- output_dummy[-c(18,19),]
 output_dummy
 ```
 
-First stage:
+First stage (using SearchScore as instrument):
 $$ {AidGiven_W} = \beta_0 + \beta_1\text{SearchScore}_W + u_W $$
 
 Second stage:
-$$ {UVE_W} = \beta_0 + \beta_1 \text{MilitaryAid}_{W-lag} + \beta_2 \text{RVE}_W + \beta_3 \text{AveragePrecipitation}_W + \beta_4 \text{AverageWindSpeed}_W + u_W $$
+$$ {UVE_W} = \beta_0 + \beta_1 \hat{AidGiven}_{W-lag} + \beta_2 \text{RVE}_W + \beta_3 \text{AveragePrecipitation}_W + \beta_4 \text{AverageWindSpeed}_W + u_W $$
+\begin{center}Where UVE shows Ukrainian-instigated events; RVE shows Russian-instigated events\end{center}
 
 # Regressions on Russia
 
@@ -758,31 +763,38 @@ output_dummy_russia
 # Patriot aid on missile use (expect to decrease)
 missile_reg <- lm(russian_missiles ~ patriot_aid, data = byweek_data)
 
-missile_reg_controlled <- lm(russian_missiles ~ patriot_aid + russian_drones, data = byweek_data)
-
-missile_reg_inst <- ivreg(russian_missiles ~ patriot_aid + russian_drones | search_score + russian_drones, data = byweek_data)
+missile_reg_controlled <- lm(russian_missiles ~ patriot_aid + russian_drones + avg_precip + avg_windspeed, data = byweek_data)
 
 output_missile <- huxreg(missile_reg, 
                 missile_reg_controlled, 
-                coefs = c("Patriot aid" = "patriot_aid", 
-                           "Russian drones" = "russian_drones")) %>%
+                coefs = c("Constant" = "(Intercept)", 
+                          "Patriot aid" = "patriot_aid", 
+                          "Russian drone use" = "russian_drones", 
+                          "Average precipitation" = "avg_precip", 
+                          "Average wind speed" = "avg_windspeed")) %>%
   set_caption("Russian Missile Use on Patriot Aid") %>%
   set_markdown_contents(1, 2, "OLS") %>%
   set_markdown_contents(1, 3, "OLS") 
+output_missile <- output_missile[-c(14,15),]
 output_missile
 ```
 
-$$ {RussianMissileUse_W} = \beta_0 + \beta_1 \text{PatriotAid}_W + \beta_2 \text{RussianDroneUse}_W + u_W $$
+$$ {RMU_W} = \beta_0 + \beta_1 \text{PatriotAid}_W + \beta_2 \text{RDU}_W + \beta_3 \text{AveragePrecipitation}_W + \beta_4 \text{AverageWindSpeed}_W + u_W $$
+
+
+
+\begin{center}Where RMU shows Russian missile use; RDU shows Russian drone use\end{center}
+
 ```{r}
 # Patriot aid on drone use (expect to increase)
-missile_reg_drone <- lm(russian_drones ~ patriot_aid, data = byweek_data)
+missile_reg_drone <- lm(russian_drones ~ patriot_aid , data = byweek_data)
 summary(missile_reg_drone)
 
 ex <- lm(russian_missiles ~ russian_drones, data = byweek_data)
 summary(ex)
 
 # Drone regressions (russian drone activity on anti drone aid)
-antidrone_reg <- lm(russian_drones ~ week_lag_aid, data = drones_dataset)
+antidrone_reg <- lm(russian_drones ~ antidrone_aid, data = drones_dataset)
 summary(antidrone_reg)
 ```
 
